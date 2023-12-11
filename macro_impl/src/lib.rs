@@ -1,9 +1,10 @@
 use std::collections::HashSet;
 
+use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use syn::{
-    parse_macro_input, punctuated::Punctuated, spanned::Spanned, AttributeArgs, Data, DeriveInput,
-    Field, Fields, Ident, Meta, NestedMeta, Type, Visibility,
+    parse_macro_input, punctuated::Punctuated, spanned::Spanned, Attribute, AttributeArgs, Data,
+    DeriveInput, Field, Fields, Ident, Meta, NestedMeta, Type, Visibility,
 };
 
 struct GlobalAttributes {
@@ -225,14 +226,22 @@ fn extract_relevant_attributes(
     field_attribute_data
 }
 
-fn acc_assigning<T: std::iter::Iterator<Item = U>, U: std::borrow::Borrow<V>, V: ToTokens>(
-    idents: T,
-) -> proc_macro2::TokenStream {
+fn acc_assigning<
+    'a,
+    T: Iterator<Item = (U, &'a Vec<Attribute>)>,
+    U: std::borrow::Borrow<V>,
+    V: ToTokens,
+>(
+    idents_with_attrs: T,
+) -> TokenStream {
     let mut acc = quote! {};
-    for ident in idents {
+    for (ident, attrs) in idents_with_attrs {
         let ident = ident.borrow();
+        let cfg_attr = attrs.iter().find(|attr| attr.path.is_ident("cfg"));
         acc = quote! {
             #acc
+
+            #cfg_attr
             self.#ident.apply_to(&mut t.#ident);
         };
     }
@@ -255,13 +264,16 @@ fn generate_apply_fn(
     let acc = match &fields {
         Fields::Unit => unreachable!(),
         Fields::Named(fields_named) => {
-            let it = fields_named.named.iter().map(|f| f.ident.as_ref().unwrap());
+            let it = fields_named
+                .named
+                .iter()
+                .map(|f| (f.ident.as_ref().unwrap(), &f.attrs));
             acc_assigning::<_, _, Ident>(it)
         }
         Fields::Unnamed(fields_unnamed) => {
-            let it = fields_unnamed.unnamed.iter().enumerate().map(|(i, _)| {
+            let it = fields_unnamed.unnamed.iter().enumerate().map(|(i, field)| {
                 let i = syn::Index::from(i);
-                quote! {#i}
+                (quote! {#i}, &field.attrs)
             });
             acc_assigning(it)
         }
