@@ -84,6 +84,7 @@ fn iter_struct_fields(the_struct: &mut DeriveInput, global_att: Option<&GlobalFi
         Some(ga) => (true, ga.default_wrapping_behavior, ga.make_fields_public),
         None => (false, false, false),
     };
+    let is_new_struct = global_att.is_some();
     let data_struct = match &mut the_struct.data {
         Data::Struct(data_struct) => data_struct,
         _ => panic!("OptionalStruct only works for structs :)"),
@@ -96,7 +97,7 @@ fn iter_struct_fields(the_struct: &mut DeriveInput, global_att: Option<&GlobalFi
     };
 
     for field in fields.iter_mut() {
-        let field_meta_data = extract_relevant_attributes(field, default_wrapping);
+        let field_meta_data = extract_relevant_attributes(field, default_wrapping, is_new_struct);
         if apply_attribute_metadata {
             field_meta_data.apply_to_field(field);
             if make_fields_public {
@@ -138,7 +139,26 @@ impl FieldAttributeData {
     }
 }
 
-fn extract_relevant_attributes(field: &mut Field, default_wrapping: bool) -> FieldAttributeData {
+fn is_serde_default_attribute(attribute: &syn::Attribute) -> syn::Result<bool> {
+    let meta = attribute.parse_meta()?;
+
+    if let Meta::List(list) = meta {
+        for nested in list.nested {
+            if let NestedMeta::Meta(Meta::NameValue(nv)) = nested {
+                if nv.path.is_ident("default") {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn extract_relevant_attributes(
+    field: &mut Field,
+    default_wrapping: bool,
+    is_new_struct: bool,
+) -> FieldAttributeData {
     const RENAME_ATTRIBUTE: &str = "optional_rename";
     const SKIP_WRAP_ATTRIBUTE: &str = "optional_skip_wrap";
     const WRAP_ATTRIBUTE: &str = "optional_wrap";
@@ -152,6 +172,10 @@ fn extract_relevant_attributes(field: &mut Field, default_wrapping: bool) -> Fie
         .iter()
         .enumerate()
         .filter_map(|(i, a)| {
+            if is_new_struct && is_serde_default_attribute(a).unwrap_or_default() {
+                return Some(i);
+            }
+
             if a.path.is_ident(RENAME_ATTRIBUTE) {
                 let args = a
                     .parse_args()
