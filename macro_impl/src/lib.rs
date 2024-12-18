@@ -27,10 +27,13 @@ impl GlobalAttributes {
             .unwrap_or(true);
         GlobalAttributes {
             new_struct_name,
-            extra_derive: vec!["Clone", "PartialEq", "Default", "Debug"]
-                .into_iter()
-                .map(|s| s.to_owned())
-                .collect(),
+            extra_derive: vec![
+                //"Clone", "PartialEq",
+                "Default", "Debug",
+            ]
+            .into_iter()
+            .map(|s| s.to_owned())
+            .collect(),
             field_attributes: GlobalFieldAttributes {
                 default_wrapping_behavior,
                 // TODO;
