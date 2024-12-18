@@ -2,8 +2,8 @@ use std::collections::HashSet;
 
 use quote::{format_ident, quote, ToTokens};
 use syn::{
-    parse_macro_input, spanned::Spanned, AttributeArgs, Data, DeriveInput, Field, Fields, Ident,
-    Meta, NestedMeta, Type, Visibility,
+    parse_macro_input, punctuated::Punctuated, spanned::Spanned, AttributeArgs, Data, DeriveInput,
+    Field, Fields, Ident, Meta, NestedMeta, Type, Visibility,
 };
 
 struct GlobalAttributes {
@@ -99,8 +99,12 @@ fn iter_struct_fields(the_struct: &mut DeriveInput, global_att: Option<&GlobalFi
         Fields::Unit => unreachable!("A struct cannot have simply a unit field?"),
     };
 
-    for field in fields.iter_mut() {
+    let mut new_fields = Punctuated::new();
+    for field in fields.into_iter() {
         let field_meta_data = extract_relevant_attributes(field, default_wrapping, is_new_struct);
+        if is_new_struct && field_meta_data.skip {
+            continue;
+        }
         if apply_attribute_metadata {
             field_meta_data.apply_to_field(field);
             if make_fields_public {
@@ -109,7 +113,14 @@ fn iter_struct_fields(the_struct: &mut DeriveInput, global_att: Option<&GlobalFi
                 })
             }
         }
+        new_fields.push(field.clone());
     }
+
+    match &mut data_struct.fields {
+        Fields::Named(f) => f.named = new_fields,
+        Fields::Unnamed(f) => f.unnamed = new_fields,
+        _ => unreachable!(),
+    };
 }
 
 fn set_new_struct_fields(new_struct: &mut DeriveInput, global_att: &GlobalFieldAttributes) {
@@ -123,6 +134,7 @@ fn remove_optional_struct_attributes(original_struct: &mut DeriveInput) {
 
 struct FieldAttributeData {
     wrap: bool,
+    skip: bool,
     new_type: Option<proc_macro2::TokenTree>,
 }
 
@@ -164,10 +176,12 @@ fn extract_relevant_attributes(
 ) -> FieldAttributeData {
     const RENAME_ATTRIBUTE: &str = "optional_rename";
     const SKIP_WRAP_ATTRIBUTE: &str = "optional_skip_wrap";
+    const SKIP_ATTRIBUTE: &str = "optional_skip";
     const WRAP_ATTRIBUTE: &str = "optional_wrap";
 
     let mut field_attribute_data = FieldAttributeData {
         wrap: default_wrapping,
+        skip: false,
         new_type: None,
     };
     let indexes_to_remove = field
@@ -192,6 +206,10 @@ fn extract_relevant_attributes(
             }
             else if a.path.is_ident(WRAP_ATTRIBUTE) {
                 field_attribute_data.wrap = true;
+                Some(i)
+            }
+            else if a.path.is_ident(SKIP_ATTRIBUTE) {
+                field_attribute_data.skip = true;
                 Some(i)
             }
             else {
@@ -228,7 +246,8 @@ fn generate_apply_fn(
     let orig_name = &derive_input.ident;
     let new_name = &new_struct.ident;
 
-    let fields = match &derive_input.data {
+    // get fields from new_struct in order to skip the ones that had the skip attribute
+    let fields = match &new_struct.data {
         Data::Struct(s) => &s.fields,
         _ => unreachable!(),
     };
