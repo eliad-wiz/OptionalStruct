@@ -159,7 +159,11 @@ fn is_serde_default_attribute(attribute: &syn::Attribute) -> syn::Result<bool> {
     let meta = attribute.parse_meta()?;
 
     if let Meta::List(list) = meta {
-        for nested in list.nested {
+        if !list.path.is_ident("serde") {
+            return Ok(false);
+        }
+
+        for nested in list.nested.iter() {
             if let NestedMeta::Meta(Meta::NameValue(nv)) = nested {
                 if nv.path.is_ident("default") {
                     return Ok(true);
