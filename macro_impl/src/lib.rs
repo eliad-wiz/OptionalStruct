@@ -174,6 +174,53 @@ fn is_serde_default_attribute(attribute: &syn::Attribute) -> syn::Result<bool> {
     Ok(false)
 }
 
+/// Transforms the serde_as(deserialize_as = "T") attribute to Option<T>
+fn transform_serde_as_attributes(meta: &mut syn::Meta) -> Option<TokenStream> {
+    let Meta::List(ref mut list) = meta else {
+        return None;
+    };
+
+    if !list.path.is_ident("serde_as") {
+        return None;
+    }
+
+    let mut changed = false;
+    for nested in list.nested.iter_mut() {
+        if let NestedMeta::Meta(Meta::NameValue(nv)) = nested {
+            if nv.path.is_ident("deserialize_as") {
+                if let syn::Lit::Str(ref lit_str) = nv.lit {
+                    let original = lit_str.value();
+                    let replaced = format!("Option<{}>", original);
+                    let new_lit = syn::Lit::Str(syn::LitStr::new(&replaced, lit_str.span()));
+                    nv.lit = new_lit;
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    if changed {
+        use quote::ToTokens;
+        let inner_tokens: proc_macro2::TokenStream = list.nested.to_token_stream();
+        Some(quote::quote! { (#inner_tokens) })
+    } else {
+        None
+    }
+}
+
+/// Modify attributes as needed for the new derived struct
+fn transorm_attributes(attribute: &mut syn::Attribute) {
+    // parse_meta creates a new meta object, so we'll need to mutate the original one
+    // manually in case of actual modifications
+    let Ok(mut meta) = attribute.parse_meta() else {
+        return;
+    };
+
+    if let Some(tokens) = transform_serde_as_attributes(&mut meta) {
+        attribute.tokens = tokens;
+    }
+}
+
 fn extract_relevant_attributes(
     field: &mut Field,
     default_wrapping: bool,
@@ -189,13 +236,18 @@ fn extract_relevant_attributes(
         skip: false,
         new_type: None,
     };
+
     let indexes_to_remove = field
         .attrs
-        .iter()
+        .iter_mut()
         .enumerate()
         .filter_map(|(i, a)| {
             if is_new_struct && is_serde_default_attribute(a).unwrap_or_default() {
                 return Some(i);
+            }
+
+            if is_new_struct {
+                transorm_attributes(a)
             }
 
             if a.path.is_ident(RENAME_ATTRIBUTE) {
