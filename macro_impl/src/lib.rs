@@ -28,13 +28,7 @@ impl GlobalAttributes {
             .unwrap_or(true);
         GlobalAttributes {
             new_struct_name,
-            extra_derive: vec![
-                //"Clone", "PartialEq",
-                "Default", "Debug",
-            ]
-            .into_iter()
-            .map(|s| s.to_owned())
-            .collect(),
+            extra_derive: vec!["Default"].into_iter().map(|s| s.to_owned()).collect(),
             field_attributes: GlobalFieldAttributes {
                 default_wrapping_behavior,
                 // TODO;
@@ -73,6 +67,33 @@ impl GlobalAttributes {
             _ => panic!("Only literal booleans are accepted for 2nd argument of 'optional_struct'"),
         }
     }
+}
+
+fn extract_optional_derive(derive_input: &mut DeriveInput) -> Vec<String> {
+    let mut extra = vec![];
+    let mut indexes_to_remove = vec![];
+
+    for (i, attr) in derive_input.attrs.iter().enumerate() {
+        if attr.path.is_ident("optional_derive") {
+            let meta = attr
+                .parse_meta()
+                .expect("Failed to parse optional_derive attribute");
+            if let Meta::List(list) = meta {
+                for nested in list.nested {
+                    if let NestedMeta::Meta(Meta::Path(p)) = nested {
+                        extra.push(quote! { #p }.to_string());
+                    }
+                }
+            }
+            indexes_to_remove.push(i);
+        }
+    }
+
+    for i in indexes_to_remove.into_iter().rev() {
+        derive_input.attrs.remove(i);
+    }
+
+    extra
 }
 
 fn set_new_struct_name(new_name: Option<String>, new_struct: &mut DeriveInput) {
@@ -396,8 +417,12 @@ pub fn optional_struct(
     input: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
     let attr = parse_macro_input!(attr as AttributeArgs);
-    let global_att = GlobalAttributes::new(&attr);
+    let mut global_att = GlobalAttributes::new(&attr);
     let mut derive_input = parse_macro_input!(input as DeriveInput);
+
+    let user_extra_derives = extract_optional_derive(&mut derive_input);
+    global_att.extra_derive.extend(user_extra_derives);
+
     let mut new_struct = derive_input.clone();
 
     set_new_struct_name(global_att.new_struct_name, &mut new_struct);
